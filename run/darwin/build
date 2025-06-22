@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_NAME="inject"
+
+WORKSPACE="$(pwd)"
+
+if [[ -z "${1-}" ]]; then
+  echo "Error: Version number is required."
+  echo "Usage: $0 <version_number> [output_directory]"
+  exit 1
+fi
+VERSION="$1"
+
+if [[ -z "${2-}" ]]; then
+  OUTPUT_DIR="${WORKSPACE}/build"
+else
+  OUTPUT_DIR="${2%/}"
+fi
+rm -rf "${OUTPUT_DIR}"
+mkdir -p "${OUTPUT_DIR}"
+
+source "${WORKSPACE}/.venv/bin/activate"
+
+pushd "${WORKSPACE}/src" > /dev/null
+
+nuitka \
+  --standalone \
+  --follow-imports \
+  --clang \
+  --lto=yes \
+  --remove-output \
+  --assume-yes-for-downloads \
+  --python-flag=nosite \
+  --python-flag=noasserts \
+  --macos-create-app-bundle \
+  --macos-app-name="Ridibooks Injector" \
+  --macos-app-version="${VERSION}" \
+  --include-package=websockets \
+  --include-data-dir=scripts=scripts \
+  --output-dir="${OUTPUT_DIR}" \
+  ${APP_NAME}.py
+
+popd > /dev/null
