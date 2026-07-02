@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+WORKSPACE="$(pwd)"
+
+python3 -m venv "${WORKSPACE}/.venv"
+source "${WORKSPACE}/.venv/bin/activate"
+pip install -r "${WORKSPACE}/requirements.txt"
