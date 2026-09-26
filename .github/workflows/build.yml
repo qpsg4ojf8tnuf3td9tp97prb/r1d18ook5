@@ -1,0 +1,121 @@
+name: Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release Tag (e.g. v1.0.0)"
+        required: true
+      release_name:
+        description: "Release Name"
+        required: false
+        default: ""
+      body:
+        description: "Release Description"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.13"
+
+      - name: Run setup script
+        shell: cmd
+        run: run\windows\setup.bat
+
+      - name: Build with Nuitka
+        shell: cmd
+        run: run\windows\build.bat
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-x86_64
+          path: build\*.exe
+
+  build-macos:
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: macos-13
+          - arch: arm64
+            runner: macos-latest
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.13"
+
+      - name: Run setup script
+        run: |
+          bash run/darwin/setup
+        shell: bash
+
+      - name: Build with Nuitka on macOS ${{ matrix.arch }}
+        run: |
+          bash run/darwin/build ${{ github.event.inputs.tag }}
+        shell: bash
+
+      - name: Upload macOS ${{ matrix.arch }} artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-${{ matrix.arch }}
+          path: build/*.app
+
+  release:
+    needs: [build-windows, build-macos]
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Windows build
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-x86_64
+          path: build
+
+      - name: Download x86_64 build
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-x86_64
+          path: build/x86_64
+
+      - name: Download arm64 build
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-arm64
+          path: build/arm64
+
+      - name: Merge into dmg
+        run: |
+          bash run/darwin/merge
+        shell: bash
+
+      - name: Upload release artifacts
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: ${{ github.event.inputs.tag }}
+          name: ${{ github.event.inputs.release_name }}
+          body: ${{ github.event.inputs.body }}
+          draft: false
+          prerelease: false
+          files: |
+            build/*.exe
+            build/*.dmg
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
