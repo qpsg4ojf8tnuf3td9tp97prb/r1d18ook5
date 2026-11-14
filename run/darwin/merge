@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_NAME="inject"
+WORKSPACE="$(pwd)"
+OUTPUT_DIR="${WORKSPACE}/build"
+x86_64="${OUTPUT_DIR}/x86_64/${APP_NAME}.app"
+arm64="${OUTPUT_DIR}/arm64/${APP_NAME}.app"
+UNIVERSAL="${OUTPUT_DIR}/universal/${APP_NAME}.app"
+
+# Cleanup and create target directory
+rm -rf "${UNIVERSAL}"
+mkdir -p "${UNIVERSAL}/Contents"
+
+# Copy basic structure from x86_64
+cp -R "${x86_64}/Contents/Info.plist" "${UNIVERSAL}/Contents/" 2>/dev/null || true
+cp -R "${x86_64}/Contents/Resources" "${UNIVERSAL}/Contents/" 2>/dev/null || true
+cp -R "${x86_64}/Contents/_CodeSignature" "${UNIVERSAL}/Contents/" 2>/dev/null || true
+
+# Create directory structure
+mkdir -p "${UNIVERSAL}/Contents/MacOS"
+(cd "${x86_64}/Contents/MacOS" && find . -type d -print0) | xargs -0 -I{} mkdir -p "${UNIVERSAL}/Contents/MacOS/{}"
+
+# Process main executable
+echo "Merging main executable: ${APP_NAME}"
+lipo -create \
+    "${x86_64}/Contents/MacOS/${APP_NAME}" \
+    "${arm64}/Contents/MacOS/${APP_NAME}" \
+    -output "${UNIVERSAL}/Contents/MacOS/${APP_NAME}"
+
+# Process all binaries (dylib, so, Python)
+echo "Processing binary files..."
+find "${x86_64}/Contents/MacOS" -type f \( -name "*.dylib" -o -name "*.so" -o -name "Python" \) -print0 |
+    while IFS= read -r -d '' x86_bin; do
+        rel_path=${x86_bin#"${x86_64}/Contents/MacOS/"}
+        arm_bin="${arm64}/Contents/MacOS/${rel_path}"
+
+        if [ -f "$arm_bin" ]; then
+            echo "Merging: ${rel_path}"
+            lipo -create "$x86_bin" "$arm_bin" -output "${UNIVERSAL}/Contents/MacOS/${rel_path}"
+        else
+            echo "Copying: ${rel_path}"
+            cp "$x86_bin" "${UNIVERSAL}/Contents/MacOS/${rel_path}"
+        fi
+    done
+
+# Copy non-binary files
+echo "Copying non-binary files..."
+find "${x86_64}/Contents/MacOS" -type f -not \( -name "*.dylib" -o -name "*.so" -o -name "${APP_NAME}" -o -name "Python" \) -print0 |
+    while IFS= read -r -d '' file; do
+        rel_path=${file#"${x86_64}/Contents/MacOS/"}
+        cp "$file" "${UNIVERSAL}/Contents/MacOS/${rel_path}"
+    done
+
+# Fix permissions for all executables
+echo "Fixing executable permissions..."
+chmod +x "${UNIVERSAL}/Contents/MacOS/${APP_NAME}"
+
+# Code sign the app
+echo "Code signing the app..."
+codesign --deep --force -s - "${UNIVERSAL}"
+
+# Create DMG file
+echo "Creating DMG package..."
+STAGING="${OUTPUT_DIR}/dmg"
+rm -rf "${STAGING}"
+mkdir -p "${STAGING}"
+
+cp -R "${UNIVERSAL}" "${STAGING}/"
+ln -s /Applications "${STAGING}/Applications"
+
+hdiutil create \
+    -volname "${APP_NAME}" \
+    -srcfolder "${STAGING}" \
+    -fs HFS+ \
+    -format UDZO \
+    "${OUTPUT_DIR}/${APP_NAME}-universal.dmg"
+
+rm -rf "${STAGING}"
+
+echo "Complete! Files: x86_64($(find "${x86_64}" -type f | wc -l)), universal($(find "${UNIVERSAL}" -type f | wc -l))"
